@@ -10,5 +10,6 @@ find . -type f \
   -path './ios/*' -or \
   -path './torch/csrc/jit/!(serialization/mobile_bytecode_generated.h)' -or \
   -path './test/cpp/jit/*' -or \
+  -path './test/cpp/deploy/*' -or \
   -path './test/cpp/tensorexpr/*' \
   | xargs tools/linter/git-clang-format --verbose "$1" --
