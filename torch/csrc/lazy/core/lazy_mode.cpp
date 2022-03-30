@@ -1,6 +1,5 @@
 #include <torch/csrc/lazy/core/lazy_mode.h>
 
-#include <c10/core/DispatchKey.h>
 #include <c10/core/impl/LocalDispatchKeySet.h>
 #include <torch/csrc/lazy/backend/backend_device.h>
 #include <torch/csrc/lazy/core/lazy_graph_executor.h>
@@ -55,8 +54,7 @@ void LazyModeExit(c10::Device device) {
         // Less obvious is that we also set an 'unlazy' key on mode exit, which lets us specially handle
         // any 'lazy' tensors that are alive after the mode exit.  This could be avoided if we can find another way
         // to make lazy tensors interoperable with eager kernels.
-        // TODO(whc) PrivateUse1 is just for prototyping
-        c10::impl::tls_set_dispatch_key_included(c10::DispatchKey::PrivateUse1, true);
+        // For now, it is set on all LTCTensorImpls by their ctor, and then behaves as a no-op if inside lazy mode
 
         // At mode exit, we use the currently 'live' lazy tensors to define a graph to compile/execute
         auto backend_device = torch::lazy::atenDeviceToBackendDevice(device);
@@ -71,10 +69,19 @@ void LazyModeExit(c10::Device device) {
     }
 }
 
+c10::DispatchKey GetUnlazyDispatchKey() {
+    return c10::DispatchKey::TESTING_ONLY_GenericWrapper;
+}
+
 void unlazy_handler(
     const c10::OperatorHandle& op,
     torch::jit::Stack* stack) {
-    LOG(ERROR) << "Unlazy Handler (isn't getting called!)";
+    if (in_lazy_mode()) {
+        LOG(WARNING) << "unlazy_handler is a no-op inside lazy mode";
+        op.redispatchBoxed(c10::DispatchKeySet(c10::DispatchKey::Lazy), stack);
+        return;
+    }
+    LOG(WARNING) << "unlazy_handler is kicking in outside lazy mode";
     // This function makes lazy tensors left alive after a lazy mode exit compatible with eager operations.
     // it doesn't modify the lazy tensors, so the next time they are used they still have to be "unlazy'd" again.
 
@@ -85,11 +92,13 @@ void unlazy_handler(
 
     // For now, just call the ts_eager_fallback code, since it does (1) and (2) for us already,
     // although it may introduce extra copies we want to avoid
+
+    c10::impl::ExcludeDispatchKeyGuard no_recursive_unlazy(GetUnlazyDispatchKey());
     ts_eager_fallback(
       op, stack, torch::lazy::getBackend()->EagerFallbackDeviceType());
 }
 
-TORCH_LIBRARY_IMPL(_, PrivateUse1, m) {
+TORCH_LIBRARY_IMPL(_, TESTING_ONLY_GenericWrapper, m) {
   m.fallback(torch::CppFunction::makeFromBoxedFunction<&unlazy_handler>());
 }
 

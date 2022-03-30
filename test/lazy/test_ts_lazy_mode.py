@@ -31,9 +31,10 @@ def test_single_operation():
         # Temp is a lazy tensor now
         out = x / y
 
+    back_to_cpu = out.to(device='cpu')
     # out is lazy, but z is eager, so + has to handle multiple devices
-    eager_value = out + z
-    print(eager_value)
+    # eager_value = out + z
+    # print(eager_value)
 
 
 def test_lazy_mode():
@@ -55,6 +56,6 @@ def test_lazy_mode():
 
 
 if __name__ == "__main__":
-    # test_lazy_mode()
+    test_lazy_mode()
     # test_single_operation()
-    test_nested()
+    # test_nested()
