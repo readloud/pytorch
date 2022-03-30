@@ -73,6 +73,30 @@ c10::DispatchKey GetUnlazyDispatchKey() {
     return c10::DispatchKey::TESTING_ONLY_GenericWrapper;
 }
 
+at::Tensor PrepareTensorForMetaKernel(at::Tensor tensor, c10::Device lazy_device) {
+    if (!in_lazy_mode()) {
+        // This function is only useful for lazy mode, but its called all the time currently,
+        // so at least make it a no-op with an assert for non-lazy-mode
+        TORCH_INTERNAL_ASSERT(tensor.device().type() == c10::kLazy);
+        return tensor;
+    }
+    // before calling meta kernels, we need to make sure all tensors are on the same device
+    if(tensor.device().type() == c10::kLazy) {
+        LOG(WARNING) << "PrepareTensorForMetaKernel skip move for already-lazy tensor on " << tensor.device();
+        TORCH_INTERNAL_ASSERT(!tensor.device().has_index());
+        return tensor;
+    } else {
+        TORCH_INTERNAL_ASSERT(tensor.device().type() != c10::kLazy);
+        LOG(WARNING) << "PrepareTensorForMetaKernel move tensor from " << tensor.device() << " to " << lazy_device;
+        // TODO: cache these so we only have to do each wrapping once
+
+        // This was going down a confusing path of redispatching. Why bother.I
+        // return tensor.to(lazy_device);
+
+        return CreateAtenFromLtcTensor(GetOrCreateLtcTensor(tensor, atenDeviceToBackendDevice(lazy_device)));
+    }
+}
+
 void unlazy_handler(
     const c10::OperatorHandle& op,
     torch::jit::Stack* stack) {

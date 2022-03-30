@@ -227,6 +227,10 @@ class GenLazyNativeFuncDefinition:
         assert len(value_types_names) > 0, "Code below assumes there is at least one tensor arg"
         get_device_str = f"""auto common_device = torch::lazy::GetBackendDevice({', '.join(value_types_names)});
         TORCH_INTERNAL_ASSERT(common_device);
+        LOG(WARNING) << "{metadata.kernel} using common device " << *common_device;
+        // auto lazy_meta_device = c10::Device("lazy:0");
+        auto lazy_meta_device = backendDeviceToAtenDevice(*common_device);
+        LOG(WARNING) << "{metadata.kernel} using lazy_meta_device " << lazy_meta_device << ":" << lazy_meta_device.index();
         """
 
         lazy_tensor_decls_str = lazy_tensor_decls(value_args, self.tensor_class)
@@ -241,7 +245,17 @@ class GenLazyNativeFuncDefinition:
                 shapes_str = ','.join([this_shape(i) for i in range(returns_length)])
                 meta_out = "std::vector<Shape> shapes{" + shapes_str + "};"
 
-            meta_str = f"""auto out_meta = at::meta::{schema.aten_name}({', '.join(str(a.name) for a in all_args)});
+            def meta_arg_str(a: LazyArgument):
+                if a.is_lazy_value and not a.is_wrapped_scalar:
+                    if a.is_optional:
+                        return f"{a.name} ? PrepareTensorForMetaKernel(*{a.name}, lazy_meta_device) : {a.name}"
+                    else:
+                        return f"PrepareTensorForMetaKernel({a.name}, lazy_meta_device)"
+                else:
+                    return str(a.name)
+
+            meta_args = ', '.join(meta_arg_str(a) for a in all_args)
+            meta_str = f"""auto out_meta = at::meta::{schema.aten_name}({meta_args});
         {meta_out}"""
         else:
             shape_sig = ComputeShapeSignature(metadata.kernel, func)
@@ -255,7 +269,8 @@ class GenLazyNativeFuncDefinition:
                                                                                       std::move(shapes));"""
         first_tensor_name = value_types_names[0]
         bridge_str = """auto result = torch::lazy::CreateAtenFromLtcTensor(
-                torch::lazy::LazyTensor::Create(std::move(node), *common_device));"""
+                torch::lazy::LazyTensor::Create(std::move(node), *common_device));
+                LOG(WARNING) << "{metadata.kernel} returning tensor on device " << result.device();"""
 
         if returns_length > 1:
             bridge_str = f"""std::vector<{self.tensor_class}Ptr> lazy_tensors;
